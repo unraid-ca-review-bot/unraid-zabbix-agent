@@ -1,0 +1,175 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name      "zabbix-agent">
+<!ENTITY author    "VRX">
+<!ENTITY version   "@VERSION@">
+<!ENTITY zbxver    "7.0.31">
+<!ENTITY tarball   "zabbix_agent-&zbxver;-linux-3.0-amd64-static.tar.gz">
+<!ENTITY sha256    "c22d06b3f4907bb3507ef881dca39dd01260768a459edf7b708db56b9f302c26">
+<!ENTITY github    "vrx-666/unraid-zabbix-agent">
+<!ENTITY pluginURL "https://github.com/&github;/releases/latest/download/&name;.plg">
+<!ENTITY plgdir    "/boot/config/plugins/&name;">
+]>
+
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="7.0.0" icon="heartbeat">
+
+<!-- Template: @VERSION@ is filled in by .github/workflows/release.yml. -->
+
+<CHANGES>
+See https://github.com/&github;/releases
+</CHANGES>
+
+<!-- Drop files from previous versions: plugin never overwrites an existing file,
+     so on update the INLINE files below would otherwise stay old. -->
+<FILE Run="/bin/bash">
+<INLINE>
+rm -f $(ls &plgdir;/*.tar.gz 2>/dev/null &#124; grep -v '&tarball;')
+rm -rf /etc/zabbix /etc/rc.d/rc.zabbix-agent
+</INLINE>
+</FILE>
+
+<!-- Official static agent from Zabbix, verified by checksum. -->
+<FILE Name="&plgdir;/&tarball;">
+<URL>https://cdn.zabbix.com/zabbix/binaries/stable/7.0/&zbxver;/&tarball;</URL>
+<SHA256>&sha256;</SHA256>
+</FILE>
+
+<FILE Name="/etc/zabbix/zabbix_agentd.conf">
+<INLINE>
+<![CDATA[
+# Managed by the zabbix-agent plugin, replaced on every update.
+# Your settings: /boot/config/plugins/zabbix-agent/zabbix_agentd.conf
+PidFile=/var/run/zabbix_agentd.pid
+LogFile=/var/log/zabbix_agentd.log
+LogFileSize=1
+# Root is needed for SMART. The key whitelist below limits what the server can ask for.
+AllowRoot=1
+UnsafeUserParameters=0
+# First rule wins. Deny ".." in parameters 1-4 before any AllowKey, so no allowed path pattern can be escaped.
+# Parameters match by position and a trailing * matches the rest; "*..*" alone checks the key name only.
+DenyKey=*[*..*,*]
+DenyKey=*[*,*..*,*]
+DenyKey=*[*,*,*..*,*]
+DenyKey=*[*,*,*,*..*,*]
+Include=/boot/config/plugins/zabbix-agent/zabbix_agentd.conf
+Include=/etc/zabbix/keys.conf
+]]>
+</INLINE>
+</FILE>
+
+<!-- Keys of the "Linux by Zabbix agent" template plus the Unraid ones. Everything else is denied. -->
+<FILE Name="/etc/zabbix/keys.conf">
+<INLINE>
+<![CDATA[
+AllowKey=agent.hostname
+AllowKey=agent.ping
+AllowKey=agent.version
+AllowKey=kernel.maxfiles
+AllowKey=kernel.maxproc
+AllowKey=net.if.discovery
+AllowKey=net.if.in[*]
+AllowKey=net.if.out[*]
+AllowKey=proc.num
+AllowKey=proc.num[*]
+AllowKey=system.boottime
+AllowKey=system.cpu.*
+AllowKey=system.cpu.*[*]
+AllowKey=system.hostname
+AllowKey=system.localtime
+AllowKey=system.swap.size[*]
+AllowKey=system.sw.arch
+AllowKey=system.sw.os
+AllowKey=system.sw.packages.get
+AllowKey=system.uname
+AllowKey=system.uptime
+AllowKey=system.users.num
+AllowKey=vfs.dev.discovery
+AllowKey=vfs.dev.*[*]
+AllowKey=vfs.file.cksum[/etc/passwd,sha256]
+AllowKey=vfs.file.contents[/sys/block/*/stat]
+AllowKey=vfs.file.contents[/sys/class/net/*/operstate]
+AllowKey=vfs.file.contents[/sys/class/net/*/speed]
+AllowKey=vfs.file.contents[/sys/class/net/*/type]
+AllowKey=vfs.fs.dependent.discovery
+AllowKey=vfs.fs.*[*]
+AllowKey=vfs.fs.get
+AllowKey=vm.memory.*
+AllowKey=vm.memory.*[*]
+AllowKey=unraid.*
+AllowKey=unraid.*[*]
+DenyKey=*
+
+# Array state: STARTED, STOPPED, ...
+UserParameter=unraid.array.state,sed -n 's/^mdState="\(.*\)"$/\1/p' /var/local/emhttp/var.ini
+# All array and pool disks as JSON (status, temp, errors, spun down) -- read from emhttp, no disk is woken up.
+UserParameter=unraid.disks,php -r 'echo json_encode(parse_ini_file("/var/local/emhttp/disks.ini", true));'
+# SMART health of one device (e.g. sdb): PASSED, FAILED or STANDBY (not woken up).
+UserParameter=unraid.smart.health[*],smartctl -n standby -H /dev/$1 | sed -n 's/^SMART overall-health.*: //p; s/.*STANDBY mode.*/STANDBY/p'
+]]>
+</INLINE>
+</FILE>
+
+<FILE Name="/etc/rc.d/rc.zabbix-agent" Mode="0755">
+<INLINE>
+<![CDATA[
+#!/bin/bash
+# Start/stop the Zabbix agent. Settings live on the flash drive.
+CONF=/etc/zabbix/zabbix_agentd.conf
+
+case "$1" in
+  start)
+    pgrep -x zabbix_agentd >/dev/null && { echo "zabbix_agentd already running"; exit 0; }
+    /usr/local/sbin/zabbix_agentd -T -c "$CONF" >/dev/null || { echo "zabbix_agentd: config test failed, not starting"; exit 1; }
+    /usr/local/sbin/zabbix_agentd -c "$CONF" && echo "zabbix_agentd started"
+    ;;
+  stop)
+    pkill -x zabbix_agentd && echo "zabbix_agentd stopped"
+    ;;
+  restart)
+    "$0" stop; sleep 1; "$0" start
+    ;;
+  status)
+    pgrep -x zabbix_agentd >/dev/null && echo "zabbix_agentd is running" || { echo "zabbix_agentd is stopped"; exit 1; }
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status}"; exit 1
+    ;;
+esac
+]]>
+</INLINE>
+</FILE>
+
+<!-- Install the binaries. First install: write default settings. Never overwrite them. -->
+<FILE Run="/bin/bash">
+<INLINE>
+<![CDATA[
+tar -xzf /boot/config/plugins/zabbix-agent/zabbix_agent-*-static.tar.gz -C /usr/local \
+  ./sbin/zabbix_agentd ./bin/zabbix_get ./bin/zabbix_sender
+CONF=/boot/config/plugins/zabbix-agent/zabbix_agentd.conf
+if [ ! -f "$CONF" ]; then
+  cat > "$CONF" <<EOF
+# Zabbix agent settings. Edit, then: /etc/rc.d/rc.zabbix-agent restart
+# Set Server (and ServerActive for active checks) to your Zabbix server.
+# The static agent from Zabbix has no TLS: traffic is not encrypted.
+Server=127.0.0.1
+#ServerActive=zabbix.example.lan
+Hostname=$(hostname)
+EOF
+  echo "Created $CONF -- set Server to your Zabbix server."
+fi
+# Restart, not start: after an update the old binary would keep running until reboot.
+/etc/rc.d/rc.zabbix-agent restart
+]]>
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+/etc/rc.d/rc.zabbix-agent stop
+rm -f /usr/local/sbin/zabbix_agentd /usr/local/bin/zabbix_get /usr/local/bin/zabbix_sender
+rm -rf /etc/zabbix /etc/rc.d/rc.zabbix-agent &plgdir;/*.tar.gz
+echo "zabbix-agent removed. Settings kept in &plgdir;/"
+</INLINE>
+</FILE>
+
+</PLUGIN>
