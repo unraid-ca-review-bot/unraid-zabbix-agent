@@ -24,7 +24,7 @@ See https://github.com/&github;/releases
 <FILE Run="/bin/bash">
 <INLINE>
 rm -f $(ls &plgdir;/*.tar.gz 2>/dev/null &#124; grep -v '&tarball;')
-rm -rf /etc/zabbix /etc/rc.d/rc.zabbix-agent
+rm -rf /etc/zabbix /etc/rc.d/rc.zabbix-agent /usr/local/emhttp/plugins/&name;
 </INLINE>
 </FILE>
 
@@ -139,6 +139,116 @@ esac
 </INLINE>
 </FILE>
 
+<!-- Settings > Network Services > Zabbix Agent. The form edits four keys of the settings file;
+     every other line of it is shown as is under Advanced. -->
+<FILE Name="/usr/local/emhttp/plugins/&name;/ZabbixAgent.page">
+<INLINE>
+<![CDATA[
+Menu="NetworkServices"
+Title="Zabbix Agent"
+Icon="heartbeat"
+Tag="heartbeat"
+---
+<?
+$file = "/boot/config/plugins/zabbix-agent/zabbix_agentd.conf";
+$val = ['Server' => '', 'ServerActive' => '', 'Hostname' => '', 'HostMetadata' => ''];
+$extra = [];
+foreach (explode("\n", str_replace(["\r\n","\r"], "\n", @file_get_contents($file) ?: '')) as $line) {
+  if (preg_match('/^\s*(Server|ServerActive|Hostname|HostMetadata)\s*=(.*)$/', $line, $m)) $val[$m[1]] = trim($m[2]);
+  else $extra[] = $line;
+}
+$extra = trim(implode("\n", $extra));
+$running = exec("pgrep -x zabbix_agentd") !== '';
+?>
+<form markdown="1" method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#command" value="/plugins/zabbix-agent/scripts/rc">
+_(Status)_:
+: <?=$running ? "<span class='green-text'>_(Running)_</span>" : "<span class='red-text'>_(Stopped)_</span>"?>
+
+&nbsp;
+: <button type="submit" name="#arg[1]" value="start" style="max-width:500px" <?=$running?'disabled':''?>>_(Start)_</button>
+  <button type="submit" name="#arg[1]" value="stop" style="max-width:500px" <?=$running?'':'disabled'?>>_(Stop)_</button>
+  <button type="submit" name="#arg[1]" value="restart" style="max-width:500px" <?=$running?'':'disabled'?>>_(Restart)_</button>
+</form>
+
+<script>
+function saveConf() {
+  var data = {csrf_token: csrf_token};
+  $('#zbx').find('input[type=text],textarea').each(function() { data[this.name] = this.value; });
+  $.post('/plugins/zabbix-agent/include/save.php', data, function(err) {
+    if (err) swal({title: "_(Settings not saved)_", text: $('<pre style="text-align:left">').text(err).prop('outerHTML'), html: true, type: 'error'});
+    else location.reload();
+  });
+}
+</script>
+<form markdown="1" id="zbx" onsubmit="return false">
+_(Zabbix server)_:
+: <input type="text" name="Server" value="<?=htmlspecialchars($val['Server'])?>" placeholder="zabbix.lan" style="max-width:500px">
+
+_(Active checks server)_:
+: <input type="text" name="ServerActive" value="<?=htmlspecialchars($val['ServerActive'])?>" placeholder="_(empty = passive checks only)_" style="max-width:500px">
+
+_(Hostname)_:
+: <input type="text" name="Hostname" value="<?=htmlspecialchars($val['Hostname'])?>" placeholder="<?=htmlspecialchars(gethostname())?>" style="max-width:500px">
+
+_(Host metadata)_:
+: <input type="text" name="HostMetadata" value="<?=htmlspecialchars($val['HostMetadata'])?>" placeholder="_(for autoregistration, e.g. unraid)_" style="max-width:500px">
+
+_(Advanced)_:
+: <textarea name="extra" spellcheck="false" cols="80" rows="<?=max(4, substr_count($extra,"\n")+2)?>" style="font-family:monospace;max-width:500px" placeholder="Timeout=10"><?=htmlspecialchars($extra)?></textarea>
+
+&nbsp;
+: <input type="button" value="_(Apply)_" onclick="saveConf()" style="max-width:500px"><input type="button" value="_(Done)_" onclick="done()" style="max-width:500px">
+
+&nbsp;
+: <span>_(Advanced takes any other agent option, one per line)_ (<a href="https://www.zabbix.com/documentation/7.0/en/manual/appendix/config/zabbix_agentd" target="_blank">_(Zabbix documentation)_</a>).<br>
+  _(Only the keys of the Linux template and the Unraid keys are allowed. AllowKey lines added here allow more.)_<br>
+  _(Settings are checked before saving; if they have errors, nothing is saved. Apply restarts the agent.)_</span>
+</form>
+]]>
+</INLINE>
+</FILE>
+
+<FILE Name="/usr/local/emhttp/plugins/&name;/include/save.php">
+<INLINE>
+<![CDATA[
+<?
+// Called by ZabbixAgent.page: write the settings only if the agent accepts them, then restart it.
+// Prints errors, nothing on success.
+$file = "/boot/config/plugins/zabbix-agent/zabbix_agentd.conf";
+$keys = ['Server', 'ServerActive', 'Hostname', 'HostMetadata'];
+$extra = trim(str_replace(["\r\n","\r"], "\n", $_POST['extra'] ?? ''));
+if (preg_match('/^\s*('.implode('|', $keys).')\s*=/m', $extra, $m)) exit("Set $m[1] in its field above, not in Advanced.");
+$text = "";
+foreach ($keys as $k) {
+  $v = trim(str_replace(["\r","\n"], '', $_POST[$k] ?? ''));
+  if ($v !== '') $text .= "$k=$v\n";
+}
+if ($extra !== '') $text .= "\n$extra\n";
+// Test the plugin's main config with the new settings in place of the file on the flash drive.
+$tmp = tempnam("/tmp", "zabbix");
+$main = tempnam("/tmp", "zabbix");
+file_put_contents($tmp, $text);
+file_put_contents($main, str_replace("Include=$file", "Include=$tmp", file_get_contents("/etc/zabbix/zabbix_agentd.conf")));
+exec("/usr/local/sbin/zabbix_agentd -T -c ".escapeshellarg($main)." 2>&1", $out, $rc);
+if ($rc === 0) {
+  copy($tmp, $file);
+  exec("/etc/rc.d/rc.zabbix-agent restart");
+} else echo str_replace([$tmp, $main], ["zabbix_agentd.conf", "/etc/zabbix/zabbix_agentd.conf"], implode("\n", $out));
+unlink($tmp);
+unlink($main);
+?>]]>
+</INLINE>
+</FILE>
+
+<!-- update.php only runs commands under the webGui root. -->
+<FILE Name="/usr/local/emhttp/plugins/&name;/scripts/rc" Mode="0755">
+<INLINE>
+#!/bin/bash
+exec /etc/rc.d/rc.zabbix-agent "$1" 2>&amp;1
+</INLINE>
+</FILE>
+
 <!-- Install the binaries. First install: write default settings. Never overwrite them. -->
 <FILE Run="/bin/bash">
 <INLINE>
@@ -147,15 +257,8 @@ tar -xzf /boot/config/plugins/zabbix-agent/zabbix_agent-*-static.tar.gz -C /usr/
   ./sbin/zabbix_agentd ./bin/zabbix_get ./bin/zabbix_sender
 CONF=/boot/config/plugins/zabbix-agent/zabbix_agentd.conf
 if [ ! -f "$CONF" ]; then
-  cat > "$CONF" <<EOF
-# Zabbix agent settings. Edit, then: /etc/rc.d/rc.zabbix-agent restart
-# Set Server (and ServerActive for active checks) to your Zabbix server.
-# The static agent from Zabbix has no TLS: traffic is not encrypted.
-Server=127.0.0.1
-#ServerActive=zabbix.example.lan
-Hostname=$(hostname)
-EOF
-  echo "Created $CONF -- set Server to your Zabbix server."
+  printf 'Server=127.0.0.1\nHostname=%s\n' "$(hostname)" > "$CONF"
+  echo "Set your Zabbix server in Settings > Network Services > Zabbix Agent."
 fi
 # Restart, not start: after an update the old binary would keep running until reboot.
 /etc/rc.d/rc.zabbix-agent restart
@@ -167,7 +270,7 @@ fi
 <INLINE>
 /etc/rc.d/rc.zabbix-agent stop
 rm -f /usr/local/sbin/zabbix_agentd /usr/local/bin/zabbix_get /usr/local/bin/zabbix_sender
-rm -rf /etc/zabbix /etc/rc.d/rc.zabbix-agent &plgdir;/*.tar.gz
+rm -rf /etc/zabbix /etc/rc.d/rc.zabbix-agent /usr/local/emhttp/plugins/&name; &plgdir;/*.tar.gz
 echo "zabbix-agent removed. Settings kept in &plgdir;/"
 </INLINE>
 </FILE>
