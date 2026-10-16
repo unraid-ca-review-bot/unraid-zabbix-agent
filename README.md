@@ -7,6 +7,8 @@ or bind mounts.
 The plugin downloads the agent from `cdn.zabbix.com` and checks its SHA256; nothing is rebuilt.
 Agent 7.0 works with Zabbix server 7.0 and newer.
 
+Support: [Unraid forum thread](https://forums.unraid.net/topic/200922-plugin-zabbix-agent/)
+
 ## Install
 
 Unraid → *Plugins* → *Install Plugin*, paste:

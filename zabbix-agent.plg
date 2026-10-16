@@ -11,7 +11,8 @@
 <!ENTITY plgdir    "/boot/config/plugins/&name;">
 ]>
 
-<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="7.0.0" icon="heartbeat">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="7.0.0" icon="heartbeat"
+        support="https://forums.unraid.net/topic/200922-plugin-zabbix-agent/">
 
 <!-- Template: @VERSION@ is filled in by .github/workflows/release.yml. -->
 
