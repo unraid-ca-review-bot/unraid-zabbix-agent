@@ -37,7 +37,8 @@ Otherwise the agent restarts with them.
 Everything is stored in one file, `/boot/config/plugins/zabbix-agent/zabbix_agentd.conf`, which survives
 plugin updates and removal. You can also edit it by hand and run `/etc/rc.d/rc.zabbix-agent restart`.
 
-On the Zabbix server, add the host with the "Linux by Zabbix agent" template.
+On the Zabbix server, add the host with the "Linux by Zabbix agent" template and, for the array and disks,
+the "Unraid by Zabbix agent" template (see [Unraid keys](#unraid-keys)).
 
 The static agent from Zabbix is built without TLS, so the traffic between agent and server is not encrypted.
 
@@ -59,6 +60,11 @@ rules, so they win. Keys with `..` in a parameter stay denied whatever you allow
 | `unraid.array.state` | Array state: `STARTED`, `STOPPED`, ... |
 | `unraid.disks` | All disks as JSON (status, temperature, errors, spun down), read from Unraid without waking disks |
 | `unraid.smart.health[sdX]` | SMART health: `PASSED`, `FAILED`, or `STANDBY` (a sleeping disk is not woken) |
+
+The template [`zbx_unraid_by_zabbix_agent.yaml`](templates/zbx_unraid_by_zabbix_agent.yaml) (also attached to every
+release) uses them: array state, and for every array and pool disk its status, errors, temperature and SMART health,
+with triggers. Import it in *Data collection > Templates > Import* (Zabbix 7.0 or newer). The temperature threshold
+is the macro `{$UNRAID.DISK.TEMP.MAX}` (50 °C); set it per disk with a context, e.g. `{$UNRAID.DISK.TEMP.MAX:"cache"}`.
 
 ## License
 

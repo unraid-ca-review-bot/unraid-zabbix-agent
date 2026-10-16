@@ -27,4 +27,4 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}[a-z]?$ ]] || { echo "Version must look like 2026.10.15" >&2; exit 1; }
           mkdir out
           sed "s/@VERSION@/$VERSION/" zabbix-agent.plg > out/zabbix-agent.plg
-          gh release create "$VERSION" out/zabbix-agent.plg --title "$VERSION" --generate-notes
+          gh release create "$VERSION" out/zabbix-agent.plg templates/zbx_unraid_by_zabbix_agent.yaml --title "$VERSION" --generate-notes

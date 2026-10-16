@@ -1,0 +1,190 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 16febb26650a4efaae8342f77197bf7c
+      name: Templates/Operating systems
+  templates:
+    - uuid: 1f758b39c9254cbca6865e8689071a5c
+      template: 'Unraid by Zabbix agent'
+      name: 'Unraid by Zabbix agent'
+      description: |
+        Unraid array and disk monitoring for the native Zabbix agent plugin (vrx-666/unraid-zabbix-agent).
+        Use together with "Linux by Zabbix agent". Disk data comes from emhttp (no disk is woken up).
+        Per-disk temperature threshold: override {$UNRAID.DISK.TEMP.MAX:"<disk name>"}, e.g. "disk1" or "cache".
+      vendor:
+        name: vrx-666
+        version: 7.0-0
+      groups:
+        - name: Templates/Operating systems
+      items:
+        - uuid: 59e36122f2fe46ac9381357fcaef7f2c
+          name: 'Unraid: Array state'
+          key: unraid.array.state
+          delay: 1m
+          value_type: CHAR
+          description: 'mdState from /var/local/emhttp/var.ini.'
+          tags:
+            - tag: component
+              value: storage
+          triggers:
+            - uuid: 1b800a33933f4c1a87031cef45dd46a2
+              expression: 'last(/Unraid by Zabbix agent/unraid.array.state)<>"STARTED"'
+              name: 'Unraid: Array is not started (state: {ITEM.LASTVALUE1})'
+              priority: HIGH
+              manual_close: 'YES'
+        - uuid: fd40fe03f4554bf19b00bf4a4d8e49dd
+          name: 'Unraid: Disks (raw)'
+          key: unraid.disks
+          delay: 1m
+          history: '0'
+          value_type: TEXT
+          description: 'All array and pool disks from /var/local/emhttp/disks.ini as JSON. Master item for disk discovery.'
+          tags:
+            - tag: component
+              value: raw
+      discovery_rules:
+        - uuid: 55ec1bc71e274fea8f7f05b5c2d8c866
+          name: 'Unraid: Disk discovery'
+          type: DEPENDENT
+          key: unraid.disks.discovery
+          delay: '0'
+          filter:
+            conditions:
+              - macro: '{#DEVICE}'
+                value: '\S'
+                formulaid: A
+          lifetime: 7d
+          enabled_lifetime_type: DISABLE_NEVER
+          description: 'Array and pool disks with a device assigned (empty slots are skipped).'
+          item_prototypes:
+            - uuid: e09616910a0443d4ab95617f3f256c34
+              name: 'Disk {#NAME}: Status'
+              type: DEPENDENT
+              key: 'unraid.disk.status[{#NAME}]'
+              delay: '0'
+              value_type: CHAR
+              description: 'Unraid disk status, DISK_OK when healthy.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$["{#NAME}"].status'
+                - type: DISCARD_UNCHANGED_HEARTBEAT
+                  parameters:
+                    - 1h
+              master_item:
+                key: unraid.disks
+              tags:
+                - tag: component
+                  value: storage
+                - tag: disk
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: fc6cbace6cf14bac822256bcdf8c286b
+                  expression: 'last(/Unraid by Zabbix agent/unraid.disk.status[{#NAME}])<>"DISK_OK"'
+                  name: 'Disk {#NAME}: Status is {ITEM.LASTVALUE1}'
+                  priority: HIGH
+            - uuid: 9d3576fee04c49a3b75be17b0f9ee9c0
+              name: 'Disk {#NAME}: Errors'
+              type: DEPENDENT
+              key: 'unraid.disk.errors[{#NAME}]'
+              delay: '0'
+              description: 'Read/write error counter shown in the Unraid Main tab (reset when the array is stopped).'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$["{#NAME}"].numErrors'
+              master_item:
+                key: unraid.disks
+              tags:
+                - tag: component
+                  value: storage
+                - tag: disk
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: 06f0098073894207ba5f0a99c1033305
+                  expression: 'last(/Unraid by Zabbix agent/unraid.disk.errors[{#NAME}])>0'
+                  name: 'Disk {#NAME}: {ITEM.LASTVALUE1} errors'
+                  priority: AVERAGE
+                  manual_close: 'YES'
+            - uuid: 41b950d4aa844c66b554c26fd2c8d415
+              name: 'Disk {#NAME}: Temperature'
+              type: DEPENDENT
+              key: 'unraid.disk.temp[{#NAME}]'
+              delay: '0'
+              units: '°C'
+              description: 'Temperature reported by Unraid. No value while the disk is spun down.'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - '$["{#NAME}"].temp'
+                - type: REGEX
+                  parameters:
+                    - '^([0-9]+)$'
+                    - \1
+                  error_handler: DISCARD_VALUE
+              master_item:
+                key: unraid.disks
+              tags:
+                - tag: component
+                  value: storage
+                - tag: disk
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: ea5d3b510738406d9cbafe365448a916
+                  expression: 'min(/Unraid by Zabbix agent/unraid.disk.temp[{#NAME}],5m)>{$UNRAID.DISK.TEMP.MAX:"{#NAME}"}'
+                  name: 'Disk {#NAME}: Temperature is above {$UNRAID.DISK.TEMP.MAX:"{#NAME}"}°C'
+                  priority: WARNING
+            - uuid: e950b001dfbe49ad87ff4ed46344047a
+              name: 'Disk {#NAME}: SMART health'
+              key: 'unraid.smart.health[{#DEVICE}]'
+              delay: 1h
+              value_type: CHAR
+              description: 'smartctl -H result. A spun-down disk is not woken up (STANDBY is discarded).'
+              preprocessing:
+                - type: NOT_MATCHES_REGEX
+                  parameters:
+                    - '^STANDBY$'
+                  error_handler: DISCARD_VALUE
+              tags:
+                - tag: component
+                  value: storage
+                - tag: disk
+                  value: '{#NAME}'
+              trigger_prototypes:
+                - uuid: f3d48cf90e424cc891c28f844193fb3f
+                  expression: 'last(/Unraid by Zabbix agent/unraid.smart.health[{#DEVICE}])="FAILED"'
+                  name: 'Disk {#NAME}: SMART health check FAILED'
+                  priority: HIGH
+                  manual_close: 'YES'
+          master_item:
+            key: unraid.disks
+          lld_macro_paths:
+            - lld_macro: '{#DEVICE}'
+              path: $.device
+            - lld_macro: '{#NAME}'
+              path: $.name
+            - lld_macro: '{#TYPE}'
+              path: $.type
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var disks = JSON.parse(value);
+                  return JSON.stringify(Object.keys(disks).map(function (k) { return disks[k]; }));
+          overrides:
+            - name: 'Flash: no temperature, no SMART'
+              step: '1'
+              filter:
+                conditions:
+                  - macro: '{#TYPE}'
+                    value: ^Flash$
+                    formulaid: A
+              operations:
+                - operationobject: ITEM_PROTOTYPE
+                  operator: REGEXP
+                  value: ': (Temperature|SMART health)$'
+                  discover: NO_DISCOVER
+      macros:
+        - macro: '{$UNRAID.DISK.TEMP.MAX}'
+          value: '50'
+          description: 'Disk temperature threshold in °C. Use the context to set it per disk, e.g. {$UNRAID.DISK.TEMP.MAX:"cache"}.'
