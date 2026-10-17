@@ -1,7 +1,8 @@
 name: Agent update
 
 # Daily: if cdn.zabbix.com has a newer 7.0.x static agent than the plugin, open a PR that
-# bumps it (version + SHA256) and run CI on it. Merging the PR releases the plugin (release.yml).
+# bumps it (version + SHA256). CI on a PR opened by the bot waits for "Approve and run" in the
+# PR, then shows as normal checks. Merging the PR releases the plugin (release.yml).
 # Fails (red run, GitHub mails) when no agent can be found at all: a silent watcher looks
 # exactly like "nothing new".
 on:
@@ -12,7 +13,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
 
 jobs:
   check:
@@ -53,13 +53,12 @@ jobs:
           git checkout -b "$branch"
           git commit -qam "Zabbix agent $new"
           git push -qf origin "$branch"   # bot-owned branch: a run that failed before the PR left it behind
-          # A PR opened with GITHUB_TOKEN does not start pull_request workflows; dispatch CI instead.
-          gh workflow run ci.yml --ref "$branch"
           gh pr create --base "$BASE" --head "$branch" --reviewer vrx-666 --title "Zabbix agent $new" --body "$(cat <<EOF
           Zabbix published agent $new ([release notes](https://www.zabbix.com/rn/rn$new)).
 
           - SHA256 \`$sha\`, computed here from the CDN download (Zabbix publishes no checksum).
-          - CI (key whitelist + plugin install on each Unraid 7.x line) runs on this branch: see the checks below.
+          - **Click "Approve and run" below** to start CI (key whitelist + plugin install on each Unraid 7.x line);
+            GitHub does not run workflows on a bot's PR without it.
 
           **Merging releases the plugin** (today's date as its version).
           EOF
