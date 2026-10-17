@@ -13,6 +13,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   check:
@@ -27,6 +28,24 @@ jobs:
           tarball() { echo "zabbix_agent-$1-linux-3.0-amd64-static.tar.gz"; }
           cur=$(sed -nE 's/^<!ENTITY zbxver +"([^"]+)">.*/\1/p' zabbix-agent.plg)
           [ -n "$cur" ] || { echo "::error::zbxver not found in zabbix-agent.plg"; exit 1; }
+
+          # A new LTS line (8.0, 9.0, ...): one issue, so the plugin can be prepared for it. Never switched
+          # here: an agent must not be newer than the server, and 8.0 needs its own key whitelist and tests.
+          lines=$(curl -fsSL https://cdn.zabbix.com/zabbix/binaries/stable/ | grep -oE 'href="[0-9]+\.0/"' | grep -oE '[0-9]+\.0') ||
+            { echo "::error::No LTS lines found at cdn.zabbix.com/zabbix/binaries/stable/ (page format changed?)"; exit 1; }
+          for lts in $lines; do
+            [ "${lts%%.*}" -gt "${cur%%.*}" ] || continue
+            title="Zabbix $lts LTS is out: prepare the plugin"
+            # list first, then grep: "gh | grep -q" under pipefail fails at random (SIGPIPE) -> duplicate issue
+            titles=$(gh issue list --state all --limit 200 --json title --jq '.[].title')
+            if ! grep -Fxq "$title" <<< "$titles"; then
+              gh issue create --assignee vrx-666 --title "$title" --body "Zabbix published the $lts LTS line: https://cdn.zabbix.com/zabbix/binaries/stable/$lts/
+
+          The plugin stays on agent ${cur%.*} (an agent newer than the server does not work). To prepare a $lts version:
+          key whitelist from the $lts Linux template, \`./test.sh\` and a test against a $lts server, then decide when to switch."
+              echo "Opened issue: $title"
+            fi
+          done
 
           # Newest 7.0.N whose static agent is already there (a directory can appear before its files).
           new=""
