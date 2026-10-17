@@ -20,7 +20,8 @@ fi
 [ -n "${URL:-}" ] || { echo "Unraid $VER not found in release list" >&2; exit 1; }
 
 echo "Downloading Unraid $VER"
-curl -fsSL --retry 3 --retry-all-errors -o "$WORK/unraid.zip" "$URL"   # big download: retry resets
+# Big download: a stalled connection never ends on its own, so abort below 100 kB/s for 60 s and retry.
+curl -fsSL --retry 3 --retry-all-errors --speed-limit 102400 --speed-time 60 -o "$WORK/unraid.zip" "$URL"
 echo "$SHA  $WORK/unraid.zip" | sha256sum -c --quiet -
 python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2], ["bzroot", "bzmodules", "bzfirmware"])' \
   "$WORK/unraid.zip" "$WORK"
