@@ -66,6 +66,14 @@ release) uses them: array state, and for every array and pool disk its status, e
 with triggers. Import it in *Data collection > Templates > Import* (Zabbix 7.0 or newer). The temperature threshold
 is the macro `{$UNRAID.DISK.TEMP.MAX}` (50 °C); set it per disk with a context, e.g. `{$UNRAID.DISK.TEMP.MAX:"cache"}`.
 
+## Updates and tests
+
+New Zabbix 7.0.x agents are picked up automatically: a daily job opens a pull request with the new version and
+its SHA256, and a release follows once it is merged. `./test-unraid.sh <version>` unpacks an Unraid release and,
+in a chroot, installs the plugin with Unraid's own plugin manager, queries the agent and the Unraid keys, runs the
+settings page's save logic under that release's PHP and removes the plugin. CI runs it on 7.0.0, the latest of
+each 7.x line and the current beta/rc.
+
 ## License
 
 Zabbix is licensed under the AGPL-3.0; the plugin files in this repository are under the same licence.

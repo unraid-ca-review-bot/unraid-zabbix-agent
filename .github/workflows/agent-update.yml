@@ -1,0 +1,66 @@
+name: Agent update
+
+# Daily: if cdn.zabbix.com has a newer 7.0.x static agent than the plugin, open a PR that
+# bumps it (version + SHA256) and run CI on it. Merging the PR releases the plugin (release.yml).
+# Fails (red run, GitHub mails) when no agent can be found at all: a silent watcher looks
+# exactly like "nothing new".
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.ref_name }}
+        run: |
+          CDN=https://cdn.zabbix.com/zabbix/binaries/stable/7.0
+          tarball() { echo "zabbix_agent-$1-linux-3.0-amd64-static.tar.gz"; }
+          cur=$(sed -nE 's/^<!ENTITY zbxver +"([^"]+)">.*/\1/p' zabbix-agent.plg)
+          [ -n "$cur" ] || { echo "::error::zbxver not found in zabbix-agent.plg"; exit 1; }
+
+          # Newest 7.0.N whose static agent is already there (a directory can appear before its files).
+          new=""
+          for v in $(curl -fsSL "$CDN/" | grep -oE 'href="7\.0\.[0-9]+/"' | grep -oE '7\.0\.[0-9]+' | sort -uVr); do
+            if curl -fsSIo /dev/null "$CDN/$v/$(tarball "$v")"; then new=$v; break; fi
+          done
+          [ -n "$new" ] || { echo "::error::No 7.0.x static agent found at $CDN/ (page format changed?)"; exit 1; }
+          echo "Plugin: $cur, newest on CDN: $new"
+          [ "$new" != "$cur" ] || exit 0
+          [ "$(printf '%s\n' "$cur" "$new" | sort -V | tail -1)" = "$new" ] ||
+            { echo "::error::CDN newest $new is older than the plugin's $cur"; exit 1; }
+
+          branch=agent-$new
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Branch $branch already exists (PR open or rejected), nothing to do"; exit 0
+          fi
+          curl -fsSL --retry 3 -o /tmp/agent.tgz "$CDN/$new/$(tarball "$new")"
+          sha=$(sha256sum /tmp/agent.tgz | cut -d' ' -f1)
+          sed -i -E -e "s/^(<!ENTITY zbxver +\")[^\"]+/\1$new/" -e "s/^(<!ENTITY sha256 +\")[^\"]+/\1$sha/" zabbix-agent.plg
+          git diff --stat
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -qam "Zabbix agent $new"
+          git push -q origin "$branch"
+          # A PR opened with GITHUB_TOKEN does not start pull_request workflows; dispatch CI instead.
+          gh workflow run ci.yml --ref "$branch"
+          gh pr create --base "$BASE" --head "$branch" --reviewer vrx-666 --title "Zabbix agent $new" --body "$(cat <<EOF
+          Zabbix published agent $new ([release notes](https://www.zabbix.com/rn/rn$new)).
+
+          - SHA256 \`$sha\`, computed here from the CDN download (Zabbix publishes no checksum).
+          - CI (key whitelist + plugin install on each Unraid 7.x line) runs on this branch: see the checks below.
+
+          **Merging releases the plugin** (today's date as its version).
+          EOF
+          )"

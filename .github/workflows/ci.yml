@@ -1,18 +1,69 @@
 name: CI
+run-name: ${{ inputs.unraid_version && format('CI {0}', inputs.unraid_version) || '' }}
 
 on:
   push:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      unraid_version:
+        description: "Test only this Unraid version (empty = 7.0.0 + latest of each 7.x line + current beta/rc)"
+        required: false
+        default: ""
   workflow_call:
+    inputs:
+      skip_prerelease:
+        description: "Leave the current Unraid beta/rc out of the test matrix"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  keys:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: ./test.sh
+
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.v.outputs.list }}
+    steps:
+      - id: v
+        env:
+          ONE: ${{ inputs.unraid_version }}
+          SKIP_NEXT: ${{ inputs.skip_prerelease }}
+        run: |
+          if [ -n "$ONE" ]; then
+            list=$(jq -cn --arg v "$ONE" '[$v]')
+          else
+            list=$(curl -fsSL https://releases.unraid.net/json | jq -c '
+              [.[].version | select(startswith("7."))]
+              | group_by(split(".")[0:2] | join("."))
+              | map(max_by(split(".") | map(tonumber))) + ["7.0.0"]')
+            if [ "$SKIP_NEXT" != true ]; then
+              next=$(curl -fsSL https://releases.unraid.net/os?branch=next | jq -r .version)   # current beta/rc
+              list=$(jq -c --arg n "$next" '. + [$n] | unique' <<< "$list")
+            fi
+          fi
+          echo "Unraid versions: $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  unraid:
+    needs: versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        unraid: ${{ fromJson(needs.versions.outputs.list) }}
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          UNRAID: ${{ matrix.unraid }}
+        run: |
+          [[ "$UNRAID" =~ ^[0-9]+(\.[0-9]+)*(-(beta|rc)\.[0-9]+)?$ ]] || { echo "Bad version: $UNRAID" >&2; exit 1; }
+          ./test-unraid.sh "$UNRAID"

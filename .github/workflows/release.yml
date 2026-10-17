@@ -1,18 +1,30 @@
 name: Release
 
+# By hand, or by merging an agent update PR (opened by agent-update.yml).
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Plugin version, e.g. 2026.10.15"
-        required: true
+        description: "Plugin version, e.g. 2026.10.15 (empty = today, next free letter)"
+        required: false
+        default: ""
+      skip_prerelease:
+        description: "Release even if the current Unraid beta/rc fails (urgent fix unrelated to it)"
+        type: boolean
+        default: false
+  pull_request:
+    types: [closed]
+    branches: [master]
 
 permissions:
   contents: write
 
 jobs:
   ci:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.merged && startsWith(github.head_ref, 'agent-') && github.event.pull_request.head.repo.full_name == github.repository)
     uses: ./.github/workflows/ci.yml
+    with:
+      skip_prerelease: ${{ inputs.skip_prerelease || false }}
 
   release:
     needs: ci
@@ -24,6 +36,10 @@ jobs:
           VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ -z "$VERSION" ]; then
+            day=$(date -u +%Y.%m.%d); VERSION=$day
+            for s in {a..z}; do gh release view "$VERSION" >/dev/null 2>&1 || break; VERSION=$day$s; done
+          fi
           [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}[a-z]?$ ]] || { echo "Version must look like 2026.10.15" >&2; exit 1; }
           mkdir out
           sed "s/@VERSION@/$VERSION/" zabbix-agent.plg > out/zabbix-agent.plg
