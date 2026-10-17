@@ -40,8 +40,8 @@ jobs:
             { echo "::error::CDN newest $new is older than the plugin's $cur"; exit 1; }
 
           branch=agent-$new
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
-            echo "Branch $branch already exists (PR open or rejected), nothing to do"; exit 0
+          if [ -n "$(gh pr list --head "$branch" --state all --json number --jq '.[].number')" ]; then
+            echo "PR for $branch already exists (open, merged or rejected), nothing to do"; exit 0
           fi
           curl -fsSL --retry 3 -o /tmp/agent.tgz "$CDN/$new/$(tarball "$new")"
           sha=$(sha256sum /tmp/agent.tgz | cut -d' ' -f1)
@@ -52,7 +52,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git commit -qam "Zabbix agent $new"
-          git push -q origin "$branch"
+          git push -qf origin "$branch"   # bot-owned branch: a run that failed before the PR left it behind
           # A PR opened with GITHUB_TOKEN does not start pull_request workflows; dispatch CI instead.
           gh workflow run ci.yml --ref "$branch"
           gh pr create --base "$BASE" --head "$branch" --reviewer vrx-666 --title "Zabbix agent $new" --body "$(cat <<EOF
